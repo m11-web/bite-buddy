@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { Flame, MapPin, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Flame, MapPin, Loader2, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { getSelectedBranchId, setSelectedBranchId, haversineKm } from "@/lib/branch-store";
@@ -22,22 +22,29 @@ export const Route = createFileRoute("/")({
 function Home() {
   const router = useRouter();
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [selectedCity, setSelectedCity] = useState("");
   const [detecting, setDetecting] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
+  const [expandedCity, setExpandedCity] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.from("branches").select("*").eq("active", true).then(({ data }) => {
+    supabase.from("branches").select("*").eq("active", true).order("city").order("area").then(({ data }) => {
       setBranches((data ?? []) as Branch[]);
     });
     if (!getSelectedBranchId()) setShowPicker(true);
   }, []);
 
-  const cities = Array.from(new Set(branches.map((b) => b.city)));
+  const byCity = useMemo(() => {
+    const map = new Map<string, Branch[]>();
+    for (const b of branches) {
+      if (!map.has(b.city)) map.set(b.city, []);
+      map.get(b.city)!.push(b);
+    }
+    return Array.from(map.entries());
+  }, [branches]);
 
   const detectLocation = () => {
     if (!("geolocation" in navigator)) {
-      toast.error("Geolocation not supported. Pick a city instead.");
+      toast.error("Geolocation not supported. Pick a branch instead.");
       return;
     }
     setDetecting(true);
@@ -49,23 +56,20 @@ function Home() {
           .map((b) => ({ b, d: haversineKm({ lat: pos.coords.latitude, lng: pos.coords.longitude }, { lat: b.lat!, lng: b.lng! }) }))
           .sort((a, z) => a.d - z.d)[0];
         setSelectedBranchId(nearest.b.id);
-        toast.success(`Nearest branch: ${nearest.b.name} (${nearest.d.toFixed(1)} km)`);
+        toast.success(`Nearest: ${nearest.b.name} (${nearest.d.toFixed(1)} km)`);
         setDetecting(false);
         router.navigate({ to: "/menu" });
       },
       () => {
         setDetecting(false);
-        toast.error("Location denied. Please pick your city.");
+        toast.error("Location denied. Please pick a branch.");
       },
       { timeout: 8000 }
     );
   };
 
-  const pickCity = (city: string) => {
-    const b = branches.find((x) => x.city === city);
-    if (!b) return;
+  const pickBranch = (b: Branch) => {
     setSelectedBranchId(b.id);
-    setSelectedCity(city);
     toast.success(`${b.name} selected`);
     router.navigate({ to: "/menu" });
   };
@@ -90,7 +94,7 @@ function Home() {
             </h1>
             <p className="mt-3 font-display text-2xl text-gold md:text-3xl">Bite That <span className="text-primary">Hits Different</span></p>
             <p className="mt-6 max-w-xl text-muted-foreground">
-              Fresh, loaded, and delivered fast. Pick your city or let us find your closest branch.
+              Fresh, loaded, and delivered fast. Detect your location or pick your exact branch.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <button
@@ -105,7 +109,7 @@ function Home() {
                 onClick={() => setShowPicker(true)}
                 className="inline-flex items-center gap-2 rounded-md border border-border bg-secondary px-5 py-3 text-sm font-semibold hover:bg-secondary/80"
               >
-                Choose city
+                Choose branch
               </button>
               <Link
                 to="/menu"
@@ -139,34 +143,61 @@ function Home() {
       {/* Branch picker modal */}
       {showPicker && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-          <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-2xl">
+          <div className="w-full max-w-lg rounded-lg border border-border bg-card p-6 shadow-2xl">
             <div className="mb-4 flex items-center gap-2">
               <MapPin className="h-5 w-5 text-primary" />
-              <h2 className="font-display text-2xl">Choose your location</h2>
+              <h2 className="font-display text-2xl">Choose your branch</h2>
             </div>
-            <p className="mb-4 text-sm text-muted-foreground">
-              Let us find your nearest branch, or pick a city manually.
-            </p>
             <button
               onClick={() => { setShowPicker(false); detectLocation(); }}
               disabled={detecting}
               className="mb-3 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
             >
               {detecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
-              Detect my location
+              Auto-detect nearest
             </button>
             <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground">
-              <div className="h-px flex-1 bg-border" />OR<div className="h-px flex-1 bg-border" />
+              <div className="h-px flex-1 bg-border" />OR PICK MANUALLY<div className="h-px flex-1 bg-border" />
             </div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">Select your city</label>
-            <select
-              value={selectedCity}
-              onChange={(e) => { setSelectedCity(e.target.value); pickCity(e.target.value); setShowPicker(false); }}
-              className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm"
-            >
-              <option value="">— Choose city —</option>
-              {cities.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+            <div className="max-h-[50vh] overflow-auto space-y-2">
+              {byCity.map(([city, list]) => {
+                const open = expandedCity === city;
+                return (
+                  <div key={city} className="rounded-md border border-border/60">
+                    <button
+                      onClick={() => setExpandedCity(open ? null : city)}
+                      className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-secondary/50"
+                    >
+                      <span className="font-display text-lg text-gold">{city}</span>
+                      <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                        {list.length} branch{list.length > 1 ? "es" : ""}
+                        <ChevronRight className={`h-4 w-4 transition-transform ${open ? "rotate-90" : ""}`} />
+                      </span>
+                    </button>
+                    {open && (
+                      <div className="border-t border-border/60 p-2 space-y-1">
+                        {list.map((b) => (
+                          <button
+                            key={b.id}
+                            onClick={() => { setShowPicker(false); pickBranch(b); }}
+                            className="flex w-full items-start gap-3 rounded-md p-2 text-left hover:bg-primary/10"
+                          >
+                            <MapPin className="mt-0.5 h-4 w-4 text-primary" />
+                            <div className="flex-1">
+                              <div className="text-sm font-medium">{b.area}</div>
+                              <div className="text-xs text-muted-foreground">{b.address}</div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {byCity.length === 0 && (
+                <div className="p-4 text-center text-sm text-muted-foreground">No branches yet.</div>
+              )}
+            </div>
             <button onClick={() => setShowPicker(false)} className="mt-4 w-full rounded-md border border-border py-2 text-xs text-muted-foreground hover:bg-secondary">
               Close
             </button>
