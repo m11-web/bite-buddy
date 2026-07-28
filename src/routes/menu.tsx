@@ -42,7 +42,7 @@ function MenuPage() {
           .eq("available", true),
       ]);
       setBranch(b as Branch | null);
-      const rows = (m ?? []) as Array<{ price_override: number | null; menu_items: MenuItem | null }>;
+      const rows = (m ?? []) as unknown as Array<{ price_override: number | null; menu_items: MenuItem | null }>;
       const list: Item[] = rows
         .filter((r) => r.menu_items && r.menu_items.active)
         .map((r) => ({
