@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, Phone } from "lucide-react";
+import { CheckCircle2, Phone, MapPin, Play, Square } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/use-auth";
 import { SiteHeader } from "@/components/site-header";
@@ -23,6 +23,8 @@ function DriverPage() {
   const router = useRouter();
   const { user, roles, loading } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
+  const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
+  const watchIdRef = useRef<number | null>(null);
 
   useEffect(() => { if (!loading && !user) router.navigate({ to: "/auth" }); }, [loading, user, router]);
 
@@ -44,17 +46,52 @@ function DriverPage() {
     return () => { supabase.removeChannel(ch); };
   }, [user]);
 
+  // Stop watch on unmount
+  useEffect(() => () => {
+    if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
+  }, []);
+
   if (loading) return <div className="min-h-screen"><SiteHeader /><div className="p-8 text-center">Loading…</div></div>;
   if (!user) return null;
   if (!roles.includes("driver") && !roles.includes("admin")) {
     return <div className="min-h-screen"><SiteHeader /><div className="p-8 text-center">Not authorized. <Link to="/" className="text-primary underline">Home</Link></div></div>;
   }
 
-  const markOut = async (o: Order) => {
+  const startDelivery = async (o: Order) => {
+    if (!("geolocation" in navigator)) return toast.error("Geolocation not supported");
+    // Move order to out_for_delivery
     const { error } = await supabase.from("orders").update({ status: "out_for_delivery" }).eq("id", o.id);
-    if (error) toast.error(error.message);
+    if (error) return toast.error(error.message);
+
+    // Stop any previous watch
+    if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
+
+    const pushLoc = async (pos: GeolocationPosition) => {
+      await supabase.from("driver_locations").upsert({
+        order_id: o.id, driver_id: user.id,
+        lat: pos.coords.latitude, lng: pos.coords.longitude,
+        updated_at: new Date().toISOString(),
+      });
+    };
+    // Prime once immediately
+    navigator.geolocation.getCurrentPosition(pushLoc, (e) => toast.error(e.message), { enableHighAccuracy: true });
+    const id = navigator.geolocation.watchPosition(pushLoc, (e) => toast.error(e.message), {
+      enableHighAccuracy: true, maximumAge: 5000, timeout: 20000,
+    });
+    watchIdRef.current = id;
+    setActiveOrderId(o.id);
+    toast.success("Live tracking started — customer can now see your location");
   };
+
+  const stopSharing = () => {
+    if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
+    watchIdRef.current = null;
+    setActiveOrderId(null);
+    toast.message("Live tracking paused");
+  };
+
   const markDelivered = async (o: Order) => {
+    stopSharing();
     const { error } = await supabase.from("orders").update({ status: "delivered" }).eq("id", o.id);
     if (error) toast.error(error.message);
     else toast.success("Marked delivered");
@@ -65,6 +102,14 @@ function DriverPage() {
       <SiteHeader />
       <div className="mx-auto max-w-3xl px-4 py-6">
         <h1 className="font-display text-4xl"><span className="text-primary">DRIVER</span> ROUTES</h1>
+        {activeOrderId && (
+          <div className="mt-4 rounded-md border border-primary/60 bg-primary/10 p-3 text-sm text-primary flex items-center gap-2">
+            <MapPin className="h-4 w-4 animate-pulse" /> Live location is being shared with customer.
+            <button onClick={stopSharing} className="ml-auto inline-flex items-center gap-1 rounded bg-secondary px-2 py-1 text-xs text-foreground">
+              <Square className="h-3 w-3" /> Stop
+            </button>
+          </div>
+        )}
         <div className="mt-6 space-y-2">
           {orders.map((o) => (
             <div key={o.id} className="rounded-md border border-border/60 bg-card p-4">
@@ -80,8 +125,13 @@ function DriverPage() {
               <div className="mt-1 text-sm text-muted-foreground">{o.address}</div>
               <div className="mt-3 flex gap-2">
                 {o.status === "ready" && (
-                  <button onClick={() => markOut(o)} className="rounded-md bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground">
-                    Pick up (Out for delivery)
+                  <button onClick={() => startDelivery(o)} className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground">
+                    <Play className="h-3 w-3" /> Start delivery
+                  </button>
+                )}
+                {o.status === "out_for_delivery" && activeOrderId !== o.id && (
+                  <button onClick={() => startDelivery(o)} className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground">
+                    <Play className="h-3 w-3" /> Resume tracking
                   </button>
                 )}
                 {o.status === "out_for_delivery" && (

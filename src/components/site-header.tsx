@@ -76,8 +76,8 @@ export function SiteHeader() {
               </button>
             </div>
           ) : (
-            <Link to="/auth" className="rounded-md border border-border px-3 py-1 text-sm hover:bg-secondary">
-              Staff
+            <Link to="/auth" className="rounded-md bg-primary px-3 py-1 text-sm font-semibold text-primary-foreground hover:bg-primary/90">
+              Sign Up
             </Link>
           )}
         </div>
