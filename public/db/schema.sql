@@ -68,6 +68,7 @@ alter table public.branch_menu_items enable row level security;
 -- ============ PROFILES / ROLES ============
 create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
+  email text,
   full_name text, phone text,
   branch_id uuid references public.branches(id) on delete set null,
   created_at timestamptz not null default now()
@@ -75,6 +76,7 @@ create table public.profiles (
 grant select, insert, update, delete on public.profiles to authenticated;
 grant all on public.profiles to service_role;
 alter table public.profiles enable row level security;
+
 
 create table public.user_roles (
   id uuid primary key default gen_random_uuid(),
@@ -128,14 +130,15 @@ grant execute on function public.has_role(uuid, public.app_role) to anon, authen
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  insert into public.profiles (id, full_name, phone)
-  values (new.id, new.raw_user_meta_data->>'full_name', new.raw_user_meta_data->>'phone')
-  on conflict (id) do nothing;
+  insert into public.profiles (id, email, full_name, phone)
+  values (new.id, new.email, new.raw_user_meta_data->>'full_name', new.raw_user_meta_data->>'phone')
+  on conflict (id) do update set email = excluded.email;
   return new;
 end; $$;
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.handle_new_user();
+
 
 create or replace function public.set_updated_at()
 returns trigger language plpgsql as $$

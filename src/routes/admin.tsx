@@ -551,12 +551,14 @@ function UsersTab() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [roles, setRoles] = useState<UserRole[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [filter, setFilter] = useState("");
+  const [roleFilter, setRoleFilter] = useState<"all" | "customer" | AppRole>("all");
 
   const load = async () => {
     const [{ data: p }, { data: r }, { data: b }] = await Promise.all([
-      supabase.from("profiles").select("*"),
+      supabase.from("profiles").select("*").order("created_at", { ascending: false }),
       supabase.from("user_roles").select("*"),
-      supabase.from("branches").select("*"),
+      supabase.from("branches").select("*").order("city").order("area"),
     ]);
     setProfiles((p ?? []) as Profile[]);
     setRoles((r ?? []) as UserRole[]);
@@ -567,41 +569,92 @@ function UsersTab() {
   const rolesFor = (uid: string) => roles.filter((r) => r.user_id === uid).map((r) => r.role);
 
   const toggleRole = async (uid: string, role: AppRole, has: boolean) => {
-    if (has) await supabase.from("user_roles").delete().eq("user_id", uid).eq("role", role);
-    else await supabase.from("user_roles").insert({ user_id: uid, role });
+    if (has) {
+      const { error } = await supabase.from("user_roles").delete().eq("user_id", uid).eq("role", role);
+      if (error) return toast.error(error.message);
+      toast.success(`Removed ${role}`);
+    } else {
+      const { error } = await supabase.from("user_roles").insert({ user_id: uid, role });
+      if (error) return toast.error(error.message);
+      toast.success(`Assigned as ${role}`);
+    }
     load();
   };
 
   const setBranch = async (uid: string, branch_id: string) => {
-    await supabase.from("profiles").update({ branch_id: branch_id || null }).eq("id", uid);
+    const { error } = await supabase.from("profiles").update({ branch_id: branch_id || null }).eq("id", uid);
+    if (error) return toast.error(error.message);
+    toast.success("Branch updated");
     load();
   };
 
+  const list = profiles.filter((p) => {
+    const has = rolesFor(p.id);
+    if (roleFilter === "customer" && has.length > 0) return false;
+    if (roleFilter !== "all" && roleFilter !== "customer" && !has.includes(roleFilter)) return false;
+    if (!filter) return true;
+    const hay = `${p.email ?? ""} ${p.full_name ?? ""} ${p.phone ?? ""}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  });
+
   return (
-    <div className="space-y-2">
-      {profiles.map((p) => {
-        const has = rolesFor(p.id);
-        return (
-          <div key={p.id} className="rounded-md border border-border/60 bg-card p-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex-1">
-                <div className="font-medium">{p.full_name || "(no name)"}</div>
-                <div className="text-xs text-muted-foreground">{p.id}</div>
+    <div>
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-card p-3">
+        <input
+          placeholder="Search by email, name or phone…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="w-full max-w-sm rounded-md border border-border bg-input px-3 py-2 text-sm"
+        />
+        <div className="ml-auto flex flex-wrap gap-1">
+          {(["all", "customer", "admin", "manager", "driver"] as const).map((r) => (
+            <button key={r} onClick={() => setRoleFilter(r)}
+              className={`rounded-full px-3 py-1 text-xs capitalize ${roleFilter === r ? "bg-primary text-primary-foreground" : "border border-border text-muted-foreground hover:bg-secondary"}`}>
+              {r}
+            </button>
+          ))}
+        </div>
+        <div className="w-full text-xs text-muted-foreground">
+          {profiles.length} total users • showing {list.length}. Everyone starts as a customer — click a role button below to promote.
+        </div>
+      </div>
+
+      <div className="space-y-2 max-h-[70vh] overflow-auto pr-1">
+        {list.map((p) => {
+          const has = rolesFor(p.id);
+          const isCustomer = has.length === 0;
+          const needsBranch = has.includes("manager") || has.includes("driver");
+          return (
+            <div key={p.id} className="rounded-md border border-border/60 bg-card p-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">{p.email || "(no email)"}</div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {p.full_name || "no name"}{p.phone ? ` • ${p.phone}` : ""}
+                  </div>
+                </div>
+                {isCustomer && (
+                  <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">customer</span>
+                )}
+                {(["admin","manager","driver"] as AppRole[]).map((r) => (
+                  <button key={r} onClick={() => toggleRole(p.id, r, has.includes(r))}
+                    className={`rounded-full px-3 py-1 text-xs capitalize ${has.includes(r) ? "bg-primary text-primary-foreground" : "border border-border text-muted-foreground hover:bg-secondary"}`}>
+                    {r}
+                  </button>
+                ))}
+                <select value={p.branch_id ?? ""} onChange={(e) => setBranch(p.id, e.target.value)}
+                  className={`rounded-md border px-2 py-1 text-xs ${needsBranch && !p.branch_id ? "border-primary bg-primary/10" : "border-border bg-input"}`}
+                  title={needsBranch ? "Assign a branch" : "Optional"}>
+                  <option value="">— no branch —</option>
+                  {branches.map((b) => <option key={b.id} value={b.id}>{b.name} — {b.area}, {b.city}</option>)}
+                </select>
               </div>
-              {(["admin","manager","driver"] as AppRole[]).map((r) => (
-                <button key={r} onClick={() => toggleRole(p.id, r, has.includes(r))}
-                  className={`rounded-full px-2 py-1 text-xs ${has.includes(r) ? "bg-primary text-primary-foreground" : "border border-border text-muted-foreground"}`}>
-                  {r}
-                </button>
-              ))}
-              <select value={p.branch_id ?? ""} onChange={(e) => setBranch(p.id, e.target.value)} className="rounded-md border border-border bg-input px-2 py-1 text-xs">
-                <option value="">— no branch —</option>
-                {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+        {list.length === 0 && <div className="py-8 text-center text-sm text-muted-foreground">No users match.</div>}
+      </div>
     </div>
   );
 }
+

@@ -17,7 +17,7 @@ export interface BranchMenuItem {
   available: boolean; price_override: number | null;
 }
 export interface Profile {
-  id: string; full_name: string | null; phone: string | null;
+  id: string; email: string | null; full_name: string | null; phone: string | null;
   branch_id: string | null; created_at: string;
 }
 export interface UserRole { id: string; user_id: string; role: AppRole }
