@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { CheckCircle2, Clock, ChefHat, Bike, PackageCheck, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, ChefHat, Bike, PackageCheck, XCircle, Phone, MapPin } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { SiteHeader } from "@/components/site-header";
 import type { Order, OrderStatus } from "@/types/db";
@@ -9,9 +9,9 @@ export const Route = createFileRoute("/order/$code")({
   head: ({ params }) => ({
     meta: [
       { title: `Order ${params.code} — Spicy Bite` },
-      { name: "description", content: "Track your Spicy Bite order status." },
+      { name: "description", content: "Track your Spicy Bite order in real time." },
       { property: "og:title", content: `Order ${params.code} — Spicy Bite` },
-      { property: "og:description", content: "Track your Spicy Bite order status." },
+      { property: "og:description", content: "Track your Spicy Bite order in real time." },
     ],
   }),
   component: OrderPage,
@@ -26,27 +26,28 @@ const STATUS_META: Record<OrderStatus, { label: string; Icon: typeof Clock; colo
   cancelled: { label: "Cancelled", Icon: XCircle, color: "text-destructive" },
 };
 
+interface Tracking {
+  order: Order;
+  driver: { full_name: string | null; phone: string | null } | null;
+  location: { lat: number; lng: number; updated_at: string } | null;
+}
+
 function OrderPage() {
   const { code } = Route.useParams();
-  const [order, setOrder] = useState<Order | null>(null);
+  const [t, setT] = useState<Tracking | null>(null);
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     const load = async () => {
-      const { data } = await supabase.rpc("get_order_by_code", { _code: code });
-      const row = Array.isArray(data) ? (data[0] as Order | undefined) : (data as Order | undefined);
-      if (!row) setNotFound(true);
-      else setOrder(row);
+      const { data } = await supabase.rpc("get_tracking", { _code: code });
+      if (cancelled) return;
+      if (!data || !(data as Tracking).order) setNotFound(true);
+      else setT(data as Tracking);
     };
     load();
-    const ch = supabase
-      .channel(`order-${code}`)
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "orders", filter: `order_code=eq.${code}` }, (payload) => {
-        setOrder(payload.new as Order);
-      })
-      .subscribe();
-    const interval = setInterval(load, 15000);
-    return () => { supabase.removeChannel(ch); clearInterval(interval); };
+    const interval = setInterval(load, 5000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [code]);
 
   if (notFound) {
@@ -61,8 +62,13 @@ function OrderPage() {
     );
   }
 
+  const order = t?.order;
   const meta = order ? STATUS_META[order.status] : STATUS_META.pending;
   const Icon = meta.Icon;
+  const trackingActive = order?.assigned_driver_id != null;
+  const mapSrc = t?.location
+    ? `https://maps.google.com/maps?q=${t.location.lat},${t.location.lng}&z=15&output=embed`
+    : null;
 
   return (
     <div className="min-h-screen">
@@ -87,6 +93,53 @@ function OrderPage() {
             </>
           )}
         </div>
+
+        {/* Track My Order — unlocks when driver is assigned */}
+        <div className={`mt-4 rounded-lg border p-5 ${trackingActive ? "border-primary/60 bg-primary/5" : "border-border/60 bg-card opacity-60"}`}>
+          <div className="flex items-center gap-2">
+            <MapPin className={`h-5 w-5 ${trackingActive ? "text-primary" : "text-muted-foreground"}`} />
+            <div className="font-display text-xl">TRACK MY ORDER</div>
+            {trackingActive && <span className="ml-auto rounded-full bg-primary/15 px-2 py-0.5 text-xs text-primary">Active</span>}
+          </div>
+          {!trackingActive && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              Live tracking will unlock once the branch assigns a driver to your order.
+            </p>
+          )}
+          {trackingActive && (
+            <div className="mt-3 space-y-3">
+              <div className="rounded-md border border-border/60 bg-background/40 p-3 text-sm">
+                <div className="text-xs text-muted-foreground">Your driver</div>
+                <div className="mt-1 flex items-center gap-2">
+                  <span className="font-medium">{t?.driver?.full_name || "Driver"}</span>
+                  {t?.driver?.phone && (
+                    <a href={`tel:${t.driver.phone}`} className="ml-auto inline-flex items-center gap-1 rounded bg-primary px-2 py-1 text-xs font-semibold text-primary-foreground">
+                      <Phone className="h-3 w-3" /> {t.driver.phone}
+                    </a>
+                  )}
+                </div>
+              </div>
+              {mapSrc ? (
+                <div className="overflow-hidden rounded-md border border-border/60">
+                  <iframe
+                    title="Driver live location"
+                    src={mapSrc}
+                    className="h-64 w-full"
+                    loading="lazy"
+                  />
+                  <div className="px-3 py-1 text-[10px] text-muted-foreground">
+                    Updated {t?.location ? new Date(t.location.updated_at).toLocaleTimeString() : "—"}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed border-border/60 p-4 text-center text-xs text-muted-foreground">
+                  Waiting for driver to press <span className="text-primary">Start delivery</span>…
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         <div className="mt-4 text-center">
           <Link to="/menu" className="text-sm text-muted-foreground hover:text-primary">← Back to menu</Link>
         </div>
