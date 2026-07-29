@@ -68,6 +68,7 @@ alter table public.branch_menu_items enable row level security;
 -- ============ PROFILES / ROLES ============
 create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
+  email text,
   full_name text, phone text,
   branch_id uuid references public.branches(id) on delete set null,
   created_at timestamptz not null default now()
@@ -75,6 +76,7 @@ create table public.profiles (
 grant select, insert, update, delete on public.profiles to authenticated;
 grant all on public.profiles to service_role;
 alter table public.profiles enable row level security;
+
 
 create table public.user_roles (
   id uuid primary key default gen_random_uuid(),
