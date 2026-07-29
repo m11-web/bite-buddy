@@ -36,6 +36,12 @@ function CartPage() {
   const [placing, setPlacing] = useState(false);
 
   const placeOrder = async () => {
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) {
+      toast.error("Please sign up or sign in to place an order");
+      router.navigate({ to: "/auth" });
+      return;
+    }
     const parsed = schema.safeParse({ customer_name: name, customer_phone: phone, address });
     if (!parsed.success) {
       toast.error(parsed.error.issues[0].message);
